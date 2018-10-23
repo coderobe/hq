@@ -44,6 +44,10 @@ Options:
     may be one of { data, text, attr }:
       data - return raw html of matching elements
       text - return inner text of matching elements
+        [mode argument: formatting]
+          supported modes: { plain, ansi, md }
+          default: plain
+          for plain, ANSI, or markdown formatted output respectively
       attr - return attribute value of matching elements
         <mode argument: attr>
           attribute to return

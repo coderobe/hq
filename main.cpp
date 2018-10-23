@@ -35,6 +35,10 @@ Options:
     may be one of { data, text, attr }:
       data - return raw html of matching elements
       text - return inner text of matching elements
+        [mode argument: formatting]
+          supported modes: { plain, ansi, md }
+          default: plain
+          for plain, ANSI, or markdown formatted output respectively
       attr - return attribute value of matching elements
         <mode argument: attr>
           attribute to return
@@ -43,6 +47,14 @@ Examples:
   curl -sSL https://example.com | %s a data
   curl -sSL https://example.com | %s a attr href
 )";
+
+static const string afmt_s = "\033[";
+static const string afmt_e = "m";
+static const vector<char> collapsible = {' ', '\t', '\n', '\r'};
+static const vector<unsigned long> breaking = {
+  MyHTML_TAG_BR,
+  MyHTML_TAG_P
+};
 
 static map<const string, bool> flags = {
   {"dirtyargs", false}
@@ -86,8 +98,16 @@ bool readfile(string filename, string &target){
   return true;
 }
 
-template <typename T> inline bool vec_has(vector<T> &vec, T val){
+template <typename T> inline bool vec_has(const vector<T> &vec, T val){
   return std::find(vec.begin(), vec.end(), val) != vec.end();
+}
+
+template <typename T> inline bool node_in(myhtml_tree_node_t* node, T tag){
+  while(node){
+    if(node->tag_id == tag) return true;
+    node = node->parent;
+  }
+  return false;
 }
 
 static map<const char, const string> option_longopts = { // maps shortopts to longopts from option_handlers
@@ -115,6 +135,78 @@ static map<const string, const function<void(int&, const char**&)>> option_handl
   }}
 };
 
+static pair<const function<void(myhtml_tree_node_t*, string&)>, const function<void(myhtml_tree_node_t*, string&)>> format_handlers = { // {format, unformat}
+  [](myhtml_tree_node_t* node_iter, string &rendered){
+    if(state["modearg"].length() > 0){
+      const bool ansi = state["modearg"] == "ansi";
+      const bool md = state["modearg"] == "md";
+      switch(node_iter->tag_id){ // modearg formatters
+        case MyHTML_TAG_B: // bold on
+        case MyHTML_TAG_STRONG:
+          if(ansi) rendered += afmt_s + "1" + afmt_e;
+          if(md) rendered += "**";
+        break;
+        case MyHTML_TAG_I: // italics on
+        case MyHTML_TAG_U:
+        case MyHTML_TAG_EM:
+          if(ansi) rendered += afmt_s + "4" + afmt_e;
+          if(md) rendered += "_";
+        break;
+        case MyHTML_TAG_CODE: // code on
+          if(node_in(node_iter, MyHTML_TAG_PRE)){
+            rendered += "```\n";
+          }else{
+            if(ansi) rendered += afmt_s + "7" + afmt_e;
+            if(md) rendered += "`";
+          }
+        break;
+      }
+    }
+    switch(node_iter->tag_id){ // global formatters
+      case MyHTML_TAG_LI:
+        rendered += "- ";
+      break;
+    }
+  },
+  [](myhtml_tree_node_t* node_iter, string &rendered){
+    if(state["modearg"].length() > 0){
+      const bool ansi = state["modearg"] == "ansi";
+      const bool md = state["modearg"] == "md";
+      switch(node_iter->tag_id){ // modearg unformatters
+        case MyHTML_TAG_B: // bold off
+        case MyHTML_TAG_STRONG:
+          if(ansi) rendered += afmt_s + "21" + afmt_e;
+          if(md) rendered += "**";
+        break;
+        case MyHTML_TAG_I: // italics off
+        case MyHTML_TAG_U:
+        case MyHTML_TAG_EM:
+          if(ansi) rendered += afmt_s + "24" + afmt_e; // no italics here :(
+          if(md) rendered += "_";
+        break;
+        case MyHTML_TAG_CODE: // code off
+          if(node_in(node_iter, MyHTML_TAG_PRE)){
+            rendered += "```\n";
+          }else{
+            if(ansi) rendered += afmt_s + "27" + afmt_e;
+            if(md) rendered += "`";
+          }
+        break;
+      }
+    }
+    switch(node_iter->tag_id){ // global unformatters
+      case MyHTML_TAG_LI:
+      case MyHTML_TAG_UL:
+        rendered += "\n";
+      break;
+    }
+
+    if(vec_has(breaking, node_iter->tag_id)){ // <br/>
+      rendered += "\n";
+    }
+  }
+};
+
 static map<const string, const function<void(myhtml_tree_node_t*)>> mode_handlers = { // maps modes to functions
   {"data", [](myhtml_tree_node_t* node) {
     myhtml_serialization_tree_callback(node, [](const char* data, size_t len, void* ctx) -> unsigned int {
@@ -127,12 +219,6 @@ static map<const string, const function<void(myhtml_tree_node_t*)>> mode_handler
   {"text", [](myhtml_tree_node_t* node) {
     string rendered = "";
 
-    static vector<char> collapsible = {' ', '\t', '\n', '\r'};
-    static vector<unsigned long> breaking = {
-      MyHTML_TAG_BR,
-      MyHTML_TAG_P
-    };
-
     myhtml_tree_node_t* node_iter = node->child;
     while(node_iter){
       const char* text_c = myhtml_node_text(node_iter, nullptr);
@@ -140,29 +226,34 @@ static map<const string, const function<void(myhtml_tree_node_t*)>> mode_handler
       if(text_c != nullptr) text += text_c;
 
       if(node_iter->tag_id == MyHTML_TAG__TEXT){
-        // collapse whitespace to single character
-        string::iterator nend = unique(text.begin(), text.end(), [](char c1, char c2) -> bool {
-          return vec_has(collapsible, c1) && vec_has(collapsible, c2);
-        });
-        text.resize(static_cast<unsigned long>(nend-text.begin()));
+        if(!node_in(node_iter, MyHTML_TAG_PRE)){
+          // collapse whitespace to single character
+          string::iterator nend = unique(text.begin(), text.end(), [](char c1, char c2) -> bool {
+            return vec_has(collapsible, c1) && vec_has(collapsible, c2);
+          });
+          text.resize(static_cast<unsigned long>(nend-text.begin()));
 
-        // replace whitespace with space
-        replace_if(text.begin(), text.end(), [](char c) -> bool {
-          return vec_has(collapsible, c);
-        }, ' ');
+          // replace whitespace with space
+          replace_if(text.begin(), text.end(), [](char c) -> bool {
+            return vec_has(collapsible, c);
+          }, ' ');
+        }
 
         rendered += text;
+      }else{
+        format_handlers.first(node_iter, rendered);
       }
 
       if(node_iter->child) node_iter = node_iter->child;
       else{
-        while(node_iter != node && node_iter->next == nullptr) node_iter = node_iter->parent;
+        while(node_iter != node && node_iter->next == nullptr){
+          format_handlers.second(node_iter, rendered);
+
+          node_iter = node_iter->parent;
+        }
         if(node_iter == node) break;
 
-        if(vec_has(breaking, node_iter->tag_id)){ // <br/>
-          rendered += "\n";
-        }
-
+        format_handlers.second(node_iter, rendered);
         node_iter = node_iter->next;
       }
     }
@@ -228,7 +319,7 @@ void parseopts(int &argc, const char** &argv){
             cerr << "invalid short option '-" << argv[1][0] << "'" << endl;
             exit(EXIT_FAILURE);
           }
-          if(flags["dirtyargs"]){
+          if(flags["dirtyargs"]){ // option handler touched argv (args?); skip
             flags["dirtyargs"] = false;
             break;
           }

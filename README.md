@@ -28,15 +28,25 @@ hq (html query) - commandline HTML processor © Robin Broda, 2018
 Usage: build/hq [options] <selector> <mode> [mode argument]
 
 Options:
--h, --help	show this text
+  -h, --help
+    show this text
+  -f, --file
+    file to read (defaults to stdin)
 
-<selector>	selector to match
-<mode>		processing mode
-		may be one of { data, text, attr }:
-		data - return raw html of matching elements
-		text - return inner text of matching elements
-		attr - return attribute value X of matching elements
-			[mode argument] - attribute to return
+  <selector>
+    CSS selector to match against
+  <mode>
+    processing mode
+    may be one of { data, text, attr }:
+      data - return raw html of matching elements
+      text - return inner text of matching elements
+      attr - return attribute value of matching elements
+        <mode argument: attr>
+          attribute to return
+
+Examples:
+  curl -sSL https://example.com | build/hq a data
+  curl -sSL https://example.com | build/hq a attr href
 ```
 
 Example usage:

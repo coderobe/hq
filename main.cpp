@@ -21,8 +21,12 @@ Usage: %s [options] <selector> <mode> [mode argument]
 Options:
   -h, --help
     show this text
-  -f, --file
+  -f, --file <file>
     file to read (defaults to stdin)
+  -d, --delimiter <delim>
+    delimiter character to use between results (defaults to newline)
+  -0, --null
+    uses \0 as delimiter
 
   <selector>
     CSS selector to match against
@@ -47,6 +51,7 @@ static map<const string, bool> flags = {
 static map<const string, string> state = { // global state
   {"progname", "hq"}, // program name
   {"file", "-"}, // input file path, or - for stdin
+  {"delim", "\n"}, // result delimiter
   {"selector", ""}, // matching selector
   {"mode", ""}, // output mode
   {"data", ""}, // read input data
@@ -87,7 +92,9 @@ template <typename T> inline bool vec_has(vector<T> &vec, T val){
 
 static map<const char, const string> option_longopts = { // maps shortopts to longopts from option_handlers
   {'h', "help"},
-  {'f', "file"}
+  {'f', "file"},
+  {'d', "delimiter"},
+  {'0', "zero"}
 };
 
 static map<const string, const function<void(int&, const char**&)>> option_handlers = { // maps longopts to functions
@@ -98,6 +105,13 @@ static map<const string, const function<void(int&, const char**&)>> option_handl
   {"file", [](int &argc, const char** &argv) {
     readarg(argc, ++argv, "file");
     argv--;
+  }},
+  {"delimiter", [](int &argc, const char** &argv) {
+    readarg(argc, ++argv, "delim");
+    argv--;
+  }},
+  {"zero", [](int &argc, const char** &argv) {
+    state["delim"] = "\0";
   }}
 };
 
@@ -107,15 +121,19 @@ static map<const string, const function<void(myhtml_tree_node_t*)>> mode_handler
       printf("%.*s", static_cast<int>(len), data);
       return 0;
     }, nullptr);
-    cout << endl;
+    printf("%c", state["delim"][0]);
   }},
 
   {"text", [](myhtml_tree_node_t* node) {
     string rendered = "";
 
     static vector<char> collapsible = {' ', '\t', '\n', '\r'};
+    static vector<unsigned long> breaking = {
+      MyHTML_TAG_BR,
+      MyHTML_TAG_P
+    };
 
-    myhtml_tree_node_t* node_iter = node;
+    myhtml_tree_node_t* node_iter = node->child;
     while(node_iter){
       const char* text_c = myhtml_node_text(node_iter, nullptr);
       string text = "";
@@ -136,14 +154,15 @@ static map<const string, const function<void(myhtml_tree_node_t*)>> mode_handler
         rendered += text;
       }
 
-      if(node_iter->tag_id == MyHTML_TAG_BR){ // <br/>
-        rendered += "\n";
-      }
-
       if(node_iter->child) node_iter = node_iter->child;
       else{
         while(node_iter != node && node_iter->next == nullptr) node_iter = node_iter->parent;
         if(node_iter == node) break;
+
+        if(vec_has(breaking, node_iter->tag_id)){ // <br/>
+          rendered += "\n";
+        }
+
         node_iter = node_iter->next;
       }
     }
@@ -157,10 +176,11 @@ static map<const string, const function<void(myhtml_tree_node_t*)>> mode_handler
       rendered.erase(index, 1);
     }
 
-    while(rendered[0] == ' ') rendered.erase(0, 1); // clear whitespace before single-line content
-    while(*(rendered.end()-1) == ' ') rendered.erase(rendered.length()-1, 1); // clear whitespace after single-line content
+    while(vec_has(collapsible, rendered[0])) rendered.erase(0, 1); // clear whitespace before single-line content
+    while(vec_has(collapsible, *(rendered.end()-1))) rendered.erase(rendered.length()-1, 1); // clear whitespace after single-line content
 
-    cout << rendered << endl;
+    cout << rendered;
+    printf("%c", state["delim"][0]);
   }},
 
   {"attr", [](myhtml_tree_node_t* node) {
@@ -176,8 +196,10 @@ static map<const string, const function<void(myhtml_tree_node_t*)>> mode_handler
     if(attr == nullptr) return;
 
     do{
-      if(state["modearg"] == mycore_string_data(&attr->key))
-        cout << mycore_string_data(&attr->value) << endl;
+      if(state["modearg"] == mycore_string_data(&attr->key)){
+        cout << mycore_string_data(&attr->value);
+        printf("%c", state["delim"][0]);
+      }
 
       if(attr != token->attr_last) attr = attr->next;
     }while(attr != token->attr_last);

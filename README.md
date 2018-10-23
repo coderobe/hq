@@ -30,8 +30,12 @@ Usage: build/hq [options] <selector> <mode> [mode argument]
 Options:
   -h, --help
     show this text
-  -f, --file
+  -f, --file <file>
     file to read (defaults to stdin)
+  -d, --delimiter <delim>
+    delimiter character to use between results (defaults to newline)
+  -0, --null
+    uses \0 as delimiter
 
   <selector>
     CSS selector to match against

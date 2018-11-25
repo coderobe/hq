@@ -51,7 +51,7 @@ Examples:
 static const string afmt_s = "\033[";
 static const string afmt_e = "m";
 static const vector<char> collapsible = {' ', '\t', '\n', '\r'};
-static const vector<unsigned long> breaking = {
+static const vector<myhtml_tag_id_t> breaking = {
   MyHTML_TAG_BR,
   MyHTML_TAG_P
 };

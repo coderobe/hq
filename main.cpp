@@ -291,9 +291,7 @@ static map<const string, const function<void(myhtml_tree_node_t*)>> mode_handler
         cout << mycore_string_data(&attr->value);
         printf("%c", state["delim"][0]);
       }
-
-      if(attr != token->attr_last) attr = attr->next;
-    }while(attr != token->attr_last);
+    }while(attr != token->attr_last && (attr = attr->next)); // move attr pointer further & loop if attr_last not hit
   }}
 };
 

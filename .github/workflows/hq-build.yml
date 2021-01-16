@@ -1,0 +1,25 @@
+name: C/C++ CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: python3 -m pip install meson
+      run: python3 -m pip install meson
+    - name: apt-get install ninja-build
+      run: apt-get install ninja-build
+    - name: meson build
+      run: meson build 
+    - name: ninja -C build
+      run: ninja -C build
+    - name: 测试
+      run: ./build/hq -h

@@ -102,11 +102,31 @@ template <typename T> inline bool vec_has(const vector<T> &vec, T val){
   return std::find(vec.begin(), vec.end(), val) != vec.end();
 }
 
-template <typename T> inline bool node_in(myhtml_tree_node_t* node, T tag){
-  while(node){
-    if(node->tag_id == tag) return true;
-    node = node->parent;
-  }
+template <typename ...T> inline bool node_in(myhtml_tree_node_t* node, T... tags){
+  while((node = node->parent))
+    for(myhtml_tag_id_t tag : {tags...})
+      if(node->tag_id == tag) return true;
+
+  return false;
+}
+
+template <typename ...T> inline bool node_before(myhtml_tree_node_t* node, T... tags){
+  while((node = node->next) && node->tag_id <= 0x003);
+
+  if(node)
+    for(myhtml_tag_id_t tag : {tags...})
+      if(node->tag_id == tag) return true;
+
+  return false;
+}
+
+template <typename ...T> inline bool node_after(myhtml_tree_node_t* node, T... tags){
+  while((node = node->prev) && node->tag_id <= 0x003);
+
+  if(node)
+    for(myhtml_tag_id_t tag : {tags...})
+      if(node->tag_id == tag) return true;
+
   return false;
 }
 
@@ -198,6 +218,12 @@ static pair<const function<void(myhtml_tree_node_t*, string&)>, const function<v
       case MyHTML_TAG_LI:
       case MyHTML_TAG_UL:
         rendered += "\n";
+      break;
+      case MyHTML_TAG_TH:
+      case MyHTML_TAG_TD:
+        if(node_before(node_iter, MyHTML_TAG_TH, MyHTML_TAG_TD)){
+          rendered += "\t";
+        }
       break;
     }
 

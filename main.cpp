@@ -12,6 +12,7 @@
 #include <myhtml/serialization.h>
 #include <mycss/selectors/serialization.h>
 #include <modest/finder/finder.h>
+#include <fmt/core.h>
 
 using namespace std;
 
@@ -27,6 +28,9 @@ Options:
     delimiter character to use between results (defaults to newline)
   -0, --null
     uses \0 as delimiter
+  -F, --format <selector> <format string>
+    specify custom format string for element stringification (can be specified multiple times)
+    example: `-F a '->{}<-'` - renders <a> text wrapped in '->' and '<-'
 
   <selector>
     CSS selector to match against
@@ -53,11 +57,18 @@ static const string afmt_e = "m";
 static const vector<char> collapsible = {' ', '\t', '\n', '\r'};
 static const vector<myhtml_tag_id_t> breaking = {
   MyHTML_TAG_BR,
-  MyHTML_TAG_P
+  MyHTML_TAG_P,
+  MyHTML_TAG_H1,
+  MyHTML_TAG_H2,
+  MyHTML_TAG_H3,
+  MyHTML_TAG_H4,
+  MyHTML_TAG_H5,
+  MyHTML_TAG_H6,
+  MyHTML_TAG_HR,
 };
 
-static map<const string, bool> flags = {
-  {"dirtyargs", false}
+static map<const string, int> flags = {
+  {"dirtyargs", 0}
 };
 
 static map<const string, string> state = { // global state
@@ -67,15 +78,16 @@ static map<const string, string> state = { // global state
   {"selector", ""}, // matching selector
   {"mode", ""}, // output mode
   {"data", ""}, // read input data
-  {"modearg", ""} // mode argument (optional)
+  {"modearg", ""}, // mode argument (optional)
+  {"scratch", ""}, // scratchpad value (internal use)
 };
 
 bool readarg(int &argc, const char** &argv, string argname, const bool die_on_err = true){
   if(argc > 1){
-    state[argname] = argv[1];
     argv++;
     argc--;
-    flags["dirtyargs"] = true;
+    state[argname] = *argv;
+    flags["dirtyargs"]++;
     return true;
   }else{
     if(die_on_err){
@@ -110,6 +122,10 @@ template <typename ...T> inline bool node_in(myhtml_tree_node_t* node, T... tags
   return false;
 }
 
+bool node_sort(myhtml_tree_node_t* lhs, myhtml_tree_node_t* rhs){
+  return myhtml_node_element_position(lhs).begin < myhtml_node_element_position(rhs).begin;
+}
+
 template <typename ...T> inline bool node_before(myhtml_tree_node_t* node, T... tags){
   while((node = node->next) && node->tag_id <= 0x003);
 
@@ -134,8 +150,20 @@ static map<const char, const string> option_longopts = { // maps shortopts to lo
   {'h', "help"},
   {'f', "file"},
   {'d', "delimiter"},
-  {'0', "zero"}
+  {'0', "zero"},
+  {'F', "format"},
 };
+
+vector<tuple<string, string, myhtml_collection_t*>> selector_format = {};
+
+const char* format_node(myhtml_tree_node_t* node){
+  for(auto& [fselect, fstr, fcollect] : selector_format)
+    if(fcollect)
+      for(myhtml_tree_node_t* select_node : vector<myhtml_tree_node_t*>(fcollect->list, fcollect->list+fcollect->length))
+        if(node == select_node) return fstr.c_str();
+
+  return "{}";
+}
 
 static map<const string, const function<void(int&, const char**&)>> option_handlers = { // maps longopts to functions
   {"help", [](int &argc, const char** &argv) {
@@ -152,7 +180,29 @@ static map<const string, const function<void(int&, const char**&)>> option_handl
   }},
   {"zero", [](int &argc, const char** &argv) {
     state["delim"] = "\0";
-  }}
+  }},
+  {"format", [](int &argc, const char** &argv) {
+    argv++, argc--;
+    if(!readarg(argc, argv, "scratch", false)){
+      cerr << "missing selector in --format" << endl;
+      exit(EXIT_FAILURE);
+    }
+    string fselect = state["scratch"];
+    if(!readarg(argc, argv, "scratch", false)){
+      cerr << "missing format string in --format" << endl;
+      exit(EXIT_FAILURE);
+    }
+    string form = state["scratch"];
+
+    if(fselect.length() == 0){
+      cerr << "invalid --format " << fselect << " " << form << endl;
+      exit(EXIT_FAILURE);
+    }
+
+    selector_format.push_back(tuple<string, string, myhtml_collection_t*>(fselect, form, nullptr));
+
+    argv--, argc++;
+  }},
 };
 
 static pair<const function<void(myhtml_tree_node_t*, string&)>, const function<void(myhtml_tree_node_t*, string&)>> format_handlers = { // {format, unformat}
@@ -169,6 +219,12 @@ static pair<const function<void(myhtml_tree_node_t*, string&)>, const function<v
         case MyHTML_TAG_I: // italics on
         case MyHTML_TAG_U:
         case MyHTML_TAG_EM:
+        case MyHTML_TAG_H1:
+        case MyHTML_TAG_H2:
+        case MyHTML_TAG_H3:
+        case MyHTML_TAG_H4:
+        case MyHTML_TAG_H5:
+        case MyHTML_TAG_H6:
           if(ansi) rendered += afmt_s + "4" + afmt_e;
           if(md) rendered += "_";
         break;
@@ -201,6 +257,12 @@ static pair<const function<void(myhtml_tree_node_t*, string&)>, const function<v
         case MyHTML_TAG_I: // italics off
         case MyHTML_TAG_U:
         case MyHTML_TAG_EM:
+        case MyHTML_TAG_H1:
+        case MyHTML_TAG_H2:
+        case MyHTML_TAG_H3:
+        case MyHTML_TAG_H4:
+        case MyHTML_TAG_H5:
+        case MyHTML_TAG_H6:
           if(ansi) rendered += afmt_s + "24" + afmt_e; // no italics here :(
           if(md) rendered += "_";
         break;
@@ -225,6 +287,11 @@ static pair<const function<void(myhtml_tree_node_t*, string&)>, const function<v
           rendered += "\t";
         }
       break;
+      case MyHTML_TAG_TR:
+        if(rendered.back() != '\n'){
+          rendered += "\n";
+        }
+      break;
     }
 
     if(vec_has(breaking, node_iter->tag_id)){ // <br/>
@@ -233,56 +300,57 @@ static pair<const function<void(myhtml_tree_node_t*, string&)>, const function<v
   }
 };
 
+string render_node(myhtml_tree_node_t* node_iter){
+  string rendered = "";
+
+  if(node_iter->tag_id == MyHTML_TAG_STYLE) return rendered;
+
+  format_handlers.first(node_iter, rendered);
+
+  if(node_iter->tag_id == MyHTML_TAG__TEXT){
+    string text(myhtml_node_text(node_iter, nullptr));
+    if(!node_in(node_iter, MyHTML_TAG_PRE)){
+      // collapse whitespace to single character
+      string::iterator nend = unique(text.begin(), text.end(), [](char c1, char c2) -> bool {
+        return vec_has(collapsible, c1) && vec_has(collapsible, c2);
+      });
+      text.resize(static_cast<unsigned long>(nend-text.begin()));
+
+      // replace whitespace with space
+      replace_if(text.begin(), text.end(), [](char c) -> bool {
+        return vec_has(collapsible, c);
+      }, ' ');
+    }
+
+    rendered += text;
+  }
+
+  if(node_iter->child){
+    rendered += render_node(node_iter->child);
+  }
+
+  rendered = fmt::format(format_node(node_iter), rendered);
+
+  format_handlers.second(node_iter, rendered);
+
+  if((node_iter = node_iter->next)){
+    rendered += render_node(node_iter);
+  }
+
+  return rendered;
+}
+
 static map<const string, const function<void(myhtml_tree_node_t*)>> mode_handlers = { // maps modes to functions
   {"data", [](myhtml_tree_node_t* node) {
     myhtml_serialization_tree_callback(node, [](const char* data, size_t len, void* ctx) -> unsigned int {
-      printf("%.*s", static_cast<int>(len), data);
+      printf("%s", data);
       return 0;
-    }, nullptr);
+    }, node);
     printf("%c", state["delim"][0]);
   }},
 
   {"text", [](myhtml_tree_node_t* node) {
-    string rendered = "";
-
-    myhtml_tree_node_t* node_iter = node->child;
-    while(node_iter){
-      const char* text_c = myhtml_node_text(node_iter, nullptr);
-      string text = "";
-      if(text_c != nullptr) text += text_c;
-
-      if(node_iter->tag_id == MyHTML_TAG__TEXT){
-        if(!node_in(node_iter, MyHTML_TAG_PRE)){
-          // collapse whitespace to single character
-          string::iterator nend = unique(text.begin(), text.end(), [](char c1, char c2) -> bool {
-            return vec_has(collapsible, c1) && vec_has(collapsible, c2);
-          });
-          text.resize(static_cast<unsigned long>(nend-text.begin()));
-
-          // replace whitespace with space
-          replace_if(text.begin(), text.end(), [](char c) -> bool {
-            return vec_has(collapsible, c);
-          }, ' ');
-        }
-
-        rendered += text;
-      }else{
-        format_handlers.first(node_iter, rendered);
-      }
-
-      if(node_iter->child) node_iter = node_iter->child;
-      else{
-        while(node_iter != node && node_iter->next == nullptr){
-          format_handlers.second(node_iter, rendered);
-
-          node_iter = node_iter->parent;
-        }
-        if(node_iter == node) break;
-
-        format_handlers.second(node_iter, rendered);
-        node_iter = node_iter->next;
-      }
-    }
+    string rendered = render_node(node->child);
 
     size_t index = 0;
     while((index = rendered.find("\n ", index)) != string::npos){ // clear whitespace before multiline content
@@ -296,7 +364,8 @@ static map<const string, const function<void(myhtml_tree_node_t*)>> mode_handler
     while(vec_has(collapsible, rendered[0])) rendered.erase(0, 1); // clear whitespace before single-line content
     while(vec_has(collapsible, *(rendered.end()-1))) rendered.erase(rendered.length()-1, 1); // clear whitespace after single-line content
 
-    cout << rendered;
+    fmt::print(format_node(node), rendered);
+    //printf(fmt, rendered);
     printf("%c", state["delim"][0]);
   }},
 
@@ -314,7 +383,7 @@ static map<const string, const function<void(myhtml_tree_node_t*)>> mode_handler
 
     do{
       if(state["modearg"] == mycore_string_data(&attr->key)){
-        cout << mycore_string_data(&attr->value);
+        fmt::print(format_node(node), mycore_string_data(&attr->value));
         printf("%c", state["delim"][0]);
       }
     }while(attr != token->attr_last && (attr = attr->next)); // move attr pointer further & loop if attr_last not hit
@@ -343,8 +412,8 @@ void parseopts(int &argc, const char** &argv){
             cerr << "invalid short option '-" << argv[1][0] << "'" << endl;
             exit(EXIT_FAILURE);
           }
-          if(flags["dirtyargs"]){ // option handler touched argv (args?); skip
-            flags["dirtyargs"] = false;
+          if(flags["dirtyargs"] > 0){ // option handler touched argv (args?); skip
+            flags["dirtyargs"]--;
             break;
           }
         }
@@ -406,9 +475,25 @@ int main(int argc, const char* argv[]){
   myhtml_collection_t* collection = nullptr;
   modest_finder_by_selectors_list(finder, html_tree->node_html, selectors_list, &collection);
 
+  for(auto& [fselect, fstr, fcollect] : selector_format){
+    mycss_selectors_list_t* fselect_parsed = mycss_selectors_parse(
+      mycss_entry_selectors(css_entry),
+      MyENCODING_UTF_8,
+      fselect.c_str(), fselect.length(),
+      &mystatus
+    );
+    if(fselect_parsed == nullptr || (fselect_parsed->flags & MyCSS_SELECTORS_FLAGS_SELECTOR_BAD)){
+      cerr << "bad format selector '" << fselect << "'" << endl;
+      exit(EXIT_FAILURE);
+    }
+    modest_finder_by_selectors_list(finder, html_tree->node_html, fselect_parsed, &fcollect);
+  }
+
   if(collection){
+    vector<myhtml_tree_node_t*> nodes(collection->list, collection->list+collection->length);
+    sort(nodes.begin(), nodes.end(), node_sort);
     try{
-      for(myhtml_tree_node_t* node : vector<myhtml_tree_node_t*>(collection->list, collection->list+collection->length)){
+      for(myhtml_tree_node_t* node : nodes){
         mode_handlers[state["mode"]](node);
       }
     }catch(bad_function_call&){

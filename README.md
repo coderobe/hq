@@ -22,7 +22,8 @@ The executable will be built to `build/hq`.
 
 #### Use
 
-Application help text: 
+##### Application help text
+
 ```
 hq (html query) - commandline HTML processor © Robin Broda, 2018
 Usage: build/hq [options] <selector> <mode> [mode argument]
@@ -57,7 +58,7 @@ Examples:
   curl -sSL https://example.com | build/hq a attr href
 ```
 
-Example usage:
+#### Example usage
 
 `curl -s https://coderobe.net | hq a data`
 ```

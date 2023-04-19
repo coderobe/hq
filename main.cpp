@@ -16,7 +16,7 @@
 
 using namespace std;
 
-static const char* helptext = R"(hq (html query) - commandline HTML processor © Robin Broda, 2018
+static const char* helptext = R"(hq (html query) - commandline HTML processor © Mara Robin Broda, 2018
 Usage: %s [options] <selector> <mode> [mode argument]
 
 Options:

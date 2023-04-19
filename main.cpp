@@ -383,7 +383,10 @@ static map<const string, const function<void(myhtml_tree_node_t*)>> mode_handler
 
     do{
       if(state["modearg"] == mycore_string_data(&attr->key)){
-        fmt::print(format_node(node), mycore_string_data(&attr->value));
+        const char* attr_value = mycore_string_data(&attr->value);
+        if(attr_value != nullptr) {
+          fmt::print(format_node(node), attr_value);
+        }
         printf("%c", state["delim"][0]);
       }
     }while(attr != token->attr_last && (attr = attr->next)); // move attr pointer further & loop if attr_last not hit
